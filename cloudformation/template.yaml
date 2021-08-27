@@ -1,0 +1,355 @@
+Description: CodePipeline for TensorFlow Model
+Parameters:
+    pSourceBucket:
+        Type: String
+        Description: S3 bucket with input data
+
+    pModelNamePrefix:
+        Type: String
+        Description: The name prefix of the model that will be supported by this pipeline
+        Default: "toxic-comment"
+
+    pEnvironment:
+      Type: String
+      Description: Environment (sbx, dev, test, preprod, prod)
+      AllowedValues:
+        - sbx
+        - dev
+        - test
+        - preprod
+        - prod
+
+    pResourceTag:
+      Type: String
+      Default: "datascience-tc"
+
+    pRepositoryName:
+      Type: String
+      Default: "MLOpsTensorFlowScriptMode"
+
+    pBuildImageName:
+      Description: Instance type
+      Type: String
+      Default: "aws/codebuild/standard:4.0"
+
+    pBranchName:
+      Description: Branch name where changes are to be detected
+      Type: String
+      Default: "master"
+    
+    pInstance:
+      Description: Sagemaker ML Instance Type
+      Type: String
+      Default: "ml.p3.8xlarge"
+
+
+Resources:
+  ################## Log Group ##############################
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "${pResourceTag}-${pModelNamePrefix}-LogGroup-${pEnvironment}"
+      RetentionInDays: 365
+  
+  ################# Code Commmit Repo #######################
+  CodeCommitRepo:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Ref pRepositoryName
+      RepositoryDescription: This is a repository for MLOps template.
+      Code:
+        BranchName: !Ref pBranchName
+        S3: 
+          Bucket: !Ref pSourceBucket
+          Key:  "code.zip"
+           
+  ################## CodeBuild and CodePipeline Role ##############################
+  CodeBuildServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub "${pResourceTag}-${pModelNamePrefix}-CodeBuildServiceRole-${pEnvironment}"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/CloudWatchFullAccess"
+      Policies:
+        - PolicyName: CodeBuildBasePolicy-CodeBuildProject
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${pResourceTag}-${pModelNamePrefix}-CodeBuildProject-${pEnvironment}"
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${pResourceTag}-${pModelNamePrefix}-CodeBuildProject-${pEnvironment}:*"
+              - Effect: Allow
+                Action:
+                  - 'iam:PassRole'
+                Resource:
+                  - "*"
+              - Effect: Allow
+                Action:
+                  - "s3:Delete*"
+                  - "s3:Put*"
+                  - "s3:Get*"
+                  - "s3:List*"
+                  - "s3:Create*"
+                  - "s3:Head*"
+                Resource:
+                  - !Sub "arn:aws:s3:::${pSourceBucket}"
+                  - !Sub "arn:aws:s3:::${pSourceBucket}/*"
+              - Effect: Allow
+                Action:
+                   - "sagemaker:CreateTrainingJob"
+                   - "sagemaker:DescribeTrainingJob"
+                   - "sagemaker:StopTrainingJob"
+                   - "sagemaker:CreateModel"
+                   - "sagemaker:CreateEndpoint"
+                   - "sagemaker:CreateEndpointConfig"
+                   - "sagemaker:DescribeEndpointConfig"
+                   - "sagemaker:DescribeEndpoint"
+                   - "sagemaker:DescribeModel"
+                   - "sagemaker:InvokeEndpoint"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - "codecommit:*"
+                Resource:
+                  - !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${pRepositoryName}"
+  
+  SagemakerServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub ${pResourceTag}-${pModelNamePrefix}-SagemkerServiceRole-${pEnvironment}
+      AssumeRolePolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - sagemaker.amazonaws.com
+              Action: 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess"
+        - "arn:aws:iam::aws:policy/CloudWatchFullAccess"
+      Policies:
+          - PolicyName: !Sub AWS-CodePipeline-${pResourceTag}-${pModelNamePrefix}
+            PolicyDocument:
+              Version: 2012-10-17
+              Statement: 
+              - Effect: Allow
+                Action:
+                  - 'sagemaker:*'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - "s3:Delete*"
+                  - "s3:Put*"
+                  - "s3:Get*"
+                  - "s3:List*"
+                  - "s3:Create*"
+                  - "s3:Head*"
+                Resource:
+                  - !Sub "arn:aws:s3:::${pSourceBucket}"
+                  - !Sub "arn:aws:s3:::${pSourceBucket}/*"
+            
+  CodePipelineServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub ${pResourceTag}-${pModelNamePrefix}-CodePipelineServiceRole-${pEnvironment}
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: !Sub AWS-CodePipeline-${pResourceTag}-${pModelNamePrefix}
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'codebuild:BatchGetBuilds'
+                  - 'codebuild:StartBuild'
+                  - 'codebuild:BatchGetBuildBatches'
+                  - 'codebuild:StartBuildBatch'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - "s3:Delete*"
+                  - "s3:Put*"
+                  - "s3:Get*"
+                  - "s3:List*"
+                  - "s3:Create*"
+                  - "s3:Head*"
+                Resource:
+                  - !Sub "arn:aws:s3:::${pSourceBucket}"
+                  - !Sub "arn:aws:s3:::${pSourceBucket}/*"
+              - Effect: Allow
+                Action:
+                  - "codecommit:*"
+                Resource:
+                  - !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${pRepositoryName}"
+
+
+################## CodeBuild Stage and CodePipeline Pipeline ##############################
+  TrainBuild:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${pResourceTag}-train-nlp'
+      Artifacts:
+        Type: CODEPIPELINE
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: train/buildspec.yml
+      Environment:
+        ComputeType: BUILD_GENERAL1_LARGE
+        Type: LINUX_CONTAINER
+        Image: !Ref pBuildImageName
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: BUCKET_NAME
+            Type: PLAINTEXT
+            Value: !Sub ${pSourceBucket}
+          - Name: SAGEMAKER_IAM_ROLE
+            Type: PLAINTEXT
+            Value: !GetAtt 
+              - SagemakerServiceRole
+              - Arn
+          - Name: STAGE
+            Type: PLAINTEXT
+            Value: !Sub ${pEnvironment}
+          - Name: INSTANCE
+            Type: PLAINTEXT
+            Value: !Sub ${pInstance}
+      TimeoutInMinutes: 120
+      LogsConfig:
+        CloudWatchLogs:
+          GroupName: !Sub "${pResourceTag}-${pModelNamePrefix}-LogGroup-${pEnvironment}"
+          Status: ENABLED
+      ServiceRole: !GetAtt
+          - CodeBuildServiceRole
+          - Arn
+          
+  Deploy:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub '${pResourceTag}-Deploy-nlp'
+      Artifacts:
+        Type: CODEPIPELINE
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: inference/buildspec.yml
+      Environment:
+        ComputeType: BUILD_GENERAL1_LARGE
+        Type: LINUX_CONTAINER
+        Image: !Ref pBuildImageName
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: BUCKET_NAME
+            Type: PLAINTEXT
+            Value: !Sub ${pSourceBucket}
+          - Name: SAGEMAKER_IAM_ROLE
+            Type: PLAINTEXT
+            Value: !GetAtt 
+              - SagemakerServiceRole
+              - Arn
+          - Name: STAGE
+            Type: PLAINTEXT
+            Value: !Sub ${pEnvironment}
+      LogsConfig:
+        CloudWatchLogs:
+          GroupName: !Sub "${pResourceTag}-${pModelNamePrefix}-LogGroup-${pEnvironment}"
+          Status: ENABLED
+      ServiceRole: !GetAtt
+        - CodeBuildServiceRole
+        - Arn
+
+  DeployPipeline:
+    Type: "AWS::CodePipeline::Pipeline"
+    Properties:
+      Name: !Sub ${pResourceTag}-${pModelNamePrefix}-pipeline
+      RoleArn: !GetAtt
+        - CodePipelineServiceRole
+        - Arn
+      ArtifactStore:
+          Type: S3
+          Location: !Sub ${pSourceBucket}
+      Stages:
+        -
+          Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Version: '1'
+                Owner: AWS
+                Category: Source
+                Provider: CodeCommit
+              OutputArtifacts:
+                - Name: Source
+              RunOrder: 1
+              Configuration:
+                RepositoryName: !Ref pRepositoryName
+                BranchName: !Ref pBranchName
+                OutputArtifactFormat: CODEBUILD_CLONE_REF
+        -
+          Name: Train
+          Actions:
+            - Name: Train
+              InputArtifacts:
+                - Name: Source
+              ActionTypeId:
+                Category: Build
+                Provider: CodeBuild
+                Owner: AWS
+                Version: '1'
+              OutputArtifacts:
+                  - Name: Train
+              Configuration:
+                ProjectName: !Ref TrainBuild
+              RunOrder: 1
+        -
+          Name: Deploy-Approval
+          Actions:
+            -
+              Name: ApproveDeploy
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Version: '1'
+                Provider: Manual
+              Configuration:
+                  CustomData: 'Is the model satisfactory?'
+              RunOrder: 1
+        -
+          Name: Deploy-Model
+          Actions:
+            -
+              Name: Deploy
+              InputArtifacts:
+                  - Name: Source
+                  - Name: Train
+              ActionTypeId:
+                Category: Build
+                Provider: CodeBuild
+                Owner: AWS
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref Deploy
+                PrimarySource: Source
+              RunOrder: 1

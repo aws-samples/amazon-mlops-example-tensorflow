@@ -1,0 +1,24 @@
+version: 0.2
+env:
+  shell: bash
+phases:
+  install:
+    runtime-versions:
+      python: 3.7
+    commands:
+      - curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+      - unzip awscliv2.zip
+      - ./aws/install
+      - pip install -r requirements.txt
+
+  pre_build:
+    commands:
+      - echo "read latest training job name and copy latest tokenizer for inference"
+      - source $CODEBUILD_SRC_DIR_Train/.env
+      - aws s3 cp $tokpath inference/tokenizer.pkl
+  build:
+    commands:
+      - echo "Deploying model trained in sagemaker training job - "
+      - echo $job 
+      - python3 inference/deploy_model.py -- job $job
+      - job=$job python -m unittest discover tests "test_posttrain.py"

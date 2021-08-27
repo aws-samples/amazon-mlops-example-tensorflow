@@ -1,0 +1,24 @@
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+      python: 3.7
+    commands:
+      - pip install -r requirements.txt
+
+  pre_build:
+    commands:
+      - echo "Preprocessing data..."
+      - python3 preprocess/input_data_etl.py
+      - python3 -m unittest discover tests "test_pretrain.py"
+  build:
+    commands:
+      - echo "The git commit ID is $CODEBUILD_RESOLVED_SOURCE_VERSION"
+      - echo "Starting training of models..."
+      - mkdir dynamic_vars
+      - python3 train/run_training.py
+artifacts:
+  files:
+    - "**/*"
+  base-directory: dynamic_vars
+  discard-paths: yes
