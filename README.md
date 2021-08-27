@@ -46,7 +46,7 @@ a machine learning workflow as applied to a NLP usecase. A tensorflow LSTM based
  - Once the pipeline run is completed, verify an endpoint is deployed in Sagemaker. 
 
  ## Cleanup:
- - Run the bash script to tear down all the infrastructure. 
+ - Run the bash script to tear down all the infrastructure. Please note this will delete the S3 bucket as well. If you are using an existing bucket that you do not want to delete, comment line 14. 
     `bash ./scripts/cleanup.sh`
 
 ## Limitations & Future Considerations:
